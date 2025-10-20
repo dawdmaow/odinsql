@@ -1,0 +1,1 @@
+watchexec -c -e odin -w . --restart  'odin test . -sanitize:address'
