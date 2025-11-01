@@ -15,3 +15,7 @@ odin build .
 odin run .
 odin test . -sanitize:address -debug
 ```
+
+# Examples
+
+See `*_tests.odin` files for usage examples.
