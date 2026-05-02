@@ -58,7 +58,7 @@ had_error_msg: bool
 
 // TODO: use dynamic arena instead
 @(thread_local)
-query_arena_buffer: [1024 * 1024 * 1024]byte
+query_arena_buffer: [1024 * 1024 * 50]byte
 @(thread_local)
 query_arena: mem.Arena
 
@@ -68,7 +68,7 @@ main_init :: proc() {
 		context.logger = log.create_console_logger(allocator = context.allocator)
 	}
 	mem.arena_init(&query_arena, query_arena_buffer[:])
-	database_query_allocator = mem.arena_allocator(&query_arena)
+	database_query_allocator = mem.arena_allocator(&query_arena) // This is fine,  if the allocator already existed this just reuses the same buffer.
 	strings.builder_init(&msgs_builder, mem.arena_allocator(&query_arena)) // my_context = context
 }
 

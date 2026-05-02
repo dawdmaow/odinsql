@@ -618,8 +618,6 @@ sql_reset_db :: proc() {
 sql_run :: proc(source_len: int) -> int {
 	context = wasm_context
 
-	// TODO: why do we need this? either document or remove.
-	// (probably to reset the database state, which is undesirable since we WANT to persist the state and even show it in the UI.)
 	main()
 
 	defer {
