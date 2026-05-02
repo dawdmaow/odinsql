@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>SQL Playground (Odin WASM)</title>
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+
+		html,
+		body {
+			margin: 0;
+			height: 100%;
+			background: #1e1e1e;
+			color: #ddd;
+			font-family: system-ui, sans-serif;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+		}
+
+		#toolbar {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			padding: 8px 12px;
+			border-bottom: 1px solid #333;
+			background: #1a1a1a;
+		}
+
+		#toolbar-right {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		#examples,
+		#run,
+		#reset-db {
+			border-radius: 4px;
+			border: 1px solid #444;
+			background: #2b2b2b;
+			color: #ddd;
+			padding: 6px 10px;
+			font-size: 14px;
+		}
+
+		#run {
+			background: #0e639c;
+			border-color: #0e639c;
+			color: #fff;
+			cursor: pointer;
+		}
+
+		#run:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+		}
+
+		#status {
+			font-size: 13px;
+			color: #9aa0a6;
+		}
+
+		/* Editor + output on the left, live DB schema on the right */
+		#main-split {
+			flex: 1;
+			min-height: 0;
+			display: flex;
+			flex-direction: row;
+		}
+
+		#workspace {
+			flex: 1;
+			min-width: 0;
+			min-height: 0;
+			display: grid;
+			grid-template-rows: 1fr minmax(180px, 34vh) minmax(160px, 30vh);
+		}
+
+		#schema-sidebar {
+			width: clamp(220px, 26vw, 360px);
+			flex-shrink: 0;
+			display: flex;
+			flex-direction: column;
+			min-height: 0;
+			border-left: 1px solid #333;
+			background: #181818;
+		}
+
+		#schema-sidebar .panel-header {
+			flex-shrink: 0;
+		}
+
+		#schema-body {
+			flex: 1;
+			min-height: 0;
+			overflow: auto;
+			padding: 8px 10px 12px;
+			font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+			font-size: 12px;
+			line-height: 1.45;
+			color: #c8c8c8;
+		}
+
+		.schema-table {
+			margin-bottom: 14px;
+		}
+
+		.schema-table-name {
+			font-weight: 600;
+			color: #e0e0e0;
+			margin: 0 0 6px;
+			font-size: 13px;
+		}
+
+		.schema-cols {
+			margin: 0;
+			padding-left: 14px;
+			list-style: disc;
+		}
+
+		.schema-cols li {
+			margin: 2px 0;
+		}
+
+		.schema-meta {
+			color: #888;
+			font-size: 11px;
+		}
+
+		.schema-indexes {
+			margin: 6px 0 0;
+			padding-left: 14px;
+			color: #9aa0a6;
+			font-size: 11px;
+		}
+
+		#editor-wrap {
+			min-height: 0;
+			border-bottom: 1px solid #333;
+		}
+
+		#editor {
+			width: 100%;
+			height: 100%;
+		}
+
+		.panel {
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			border-bottom: 1px solid #333;
+		}
+
+		.panel:last-child {
+			border-bottom: none;
+		}
+
+		.panel-header {
+			padding: 6px 10px;
+			font-size: 11px;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			color: #888;
+			background: #161616;
+			border-bottom: 1px solid #333;
+		}
+
+		#term-wrap {
+			flex: 1;
+			min-height: 0;
+			padding: 8px 10px;
+		}
+
+		#term {
+			width: 100%;
+			height: 100%;
+		}
+
+		#table-wrap {
+			flex: 1;
+			min-height: 0;
+			overflow: auto;
+			padding: 8px 10px;
+		}
+
+		#result-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+			font-size: 13px;
+		}
+
+		#result-table th,
+		#result-table td {
+			border: 1px solid #3a3a3a;
+			padding: 6px 8px;
+			text-align: left;
+			vertical-align: top;
+		}
+
+		#result-table th {
+			background: #252525;
+			color: #ddd;
+			position: sticky;
+			top: 0;
+		}
+
+		#table-empty {
+			color: #888;
+			font-size: 13px;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="toolbar">
+		<span id="status">Loading WASM...</span>
+		<div id="toolbar-right">
+			<select id="examples" aria-label="Example SQL"></select>
+			<button id="reset-db" type="button" disabled title="Restore users, orders, payments, and shipments to their original rows">Reset
+				DB</button>
+			<button id="run" type="button" disabled>Run</button>
+		</div>
+	</div>
+	<div id="main-split">
+		<div id="workspace">
+			<div id="editor-wrap">
+				<div id="editor"></div>
+			</div>
+			<div class="panel">
+				<div class="panel-header">Output</div>
+				<div id="term-wrap">
+					<div id="term"></div>
+				</div>
+			</div>
+			<div class="panel">
+				<div class="panel-header">Results Table</div>
+				<div id="table-wrap">
+					<div id="table-empty">Run a SELECT query to render rows.</div>
+					<table id="result-table" hidden></table>
+				</div>
+			</div>
+		</div>
+		<aside id="schema-sidebar" aria-label="Database schema">
+			<div class="panel-header">Tables</div>
+			<div id="schema-body">Loading schema…</div>
+		</aside>
+	</div>
+
+	<script src="odin.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+
+	<script>
+		(function () {
+			const statusEl = document.getElementById("status");
+			const runBtn = document.getElementById("run");
+			const resetDbBtn = document.getElementById("reset-db");
+			const examplesEl = document.getElementById("examples");
+			const tableEl = document.getElementById("result-table");
+			const emptyEl = document.getElementById("table-empty");
+			const schemaBodyEl = document.getElementById("schema-body");
+
+			const term = new Terminal({
+				convertEol: true,
+				fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
+				fontSize: 13,
+				theme: { background: "#1a1a1a", foreground: "#d4d4d4" },
+				disableStdin: true,
+			});
+			const fitAddon = new FitAddon.FitAddon();
+			term.loadAddon(fitAddon);
+			term.open(document.getElementById("term"));
+			fitAddon.fit();
+			window.addEventListener("resize", () => fitAddon.fit());
+
+			let EXAMPLES = [];
+
+			function normalizeExampleCode(value) {
+				if (Array.isArray(value)) return value.join("\n");
+				return typeof value === "string" ? value : "";
+			}
+
+			function setExampleOptions(examples) {
+				examplesEl.textContent = "";
+				for (const [index, item] of examples.entries()) {
+					const option = document.createElement("option");
+					option.value = item.id;
+					option.textContent = item.label;
+					if (index === 0) option.selected = true;
+					examplesEl.appendChild(option);
+				}
+			}
+
+			async function loadExamples() {
+				const response = await fetch("query_examples.json");
+				if (!response.ok) {
+					throw new Error("Failed to fetch query_examples.json (" + response.status + ")");
+				}
+				const payload = await response.json();
+				if (!Array.isArray(payload)) {
+					throw new Error("query_examples.json must contain an array");
+				}
+				const normalized = payload
+					.filter((item) => item && typeof item === "object")
+					.map((item) => ({
+						id: String(item.id || ""),
+						label: String(item.label || ""),
+						code: normalizeExampleCode(item.code),
+					}))
+					.filter((item) => item.id && item.label && item.code);
+				if (!normalized.length) {
+					throw new Error("query_examples.json does not contain valid examples");
+				}
+				return normalized;
+			}
+
+			require.config({
+				paths: {
+					vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs",
+				},
+			});
+
+			let wasmExports = null;
+			let memU8 = null;
+			let scratchBase = 0;
+			let scratchCap = 0;
+			let editor = null;
+			const MARKER_OWNER = "sql-engine";
+
+			function refreshMemView() {
+				memU8 = new Uint8Array(wasmExports.memory.buffer);
+			}
+
+			function readWasmString(ptr, len) {
+				if (!ptr || !len) return "";
+				if (memU8.buffer !== wasmExports.memory.buffer) {
+					refreshMemView();
+				}
+				return new TextDecoder().decode(memU8.subarray(ptr, ptr + len));
+			}
+
+			function escapeHtml(s) {
+				return String(s)
+					.replace(/&/g, "&amp;")
+					.replace(/</g, "&lt;")
+					.replace(/>/g, "&gt;")
+					.replace(/"/g, "&quot;");
+			}
+
+			// Filled from WASM after init and after every Run (CREATE/ALTER/DROP refresh automatically).
+			function renderSchemaPanel() {
+				if (!schemaBodyEl || !wasmExports) return;
+				const readPtr = wasmExports.sql_last_schema_ptr;
+				const readLen = wasmExports.sql_last_schema_len;
+				if (typeof readPtr !== "function" || typeof readLen !== "function") {
+					schemaBodyEl.textContent = "Schema export not available in this WASM build.";
+					return;
+				}
+				const jsonText = readWasmString(readPtr(), readLen());
+				if (!jsonText) {
+					schemaBodyEl.textContent = "No schema data.";
+					return;
+				}
+				let payload;
+				try {
+					payload = JSON.parse(jsonText);
+				} catch (err) {
+					schemaBodyEl.textContent = "Schema JSON parse error: " + String(err);
+					return;
+				}
+				const tables = payload && Array.isArray(payload.tables) ? payload.tables : [];
+				if (!tables.length) {
+					schemaBodyEl.textContent = "No tables in the database.";
+					return;
+				}
+				const parts = [];
+				for (const t of tables) {
+					if (!t || typeof t !== "object") continue;
+					const tname = escapeHtml(t.name || "(unnamed)");
+					parts.push('<section class="schema-table">');
+					parts.push('<h3 class="schema-table-name">' + tname + "</h3>");
+					const cols = Array.isArray(t.columns) ? t.columns : [];
+					if (cols.length) {
+						parts.push("<ul class=\"schema-cols\">");
+						for (const c of cols) {
+							if (!c || typeof c !== "object") continue;
+							const bits = [];
+							if (c.primary_key) bits.push("PK");
+							if (c.not_null) bits.push("NOT NULL");
+							const meta = bits.length ? ' <span class="schema-meta">(' + bits.join(", ") + ")</span>" : "";
+							const ty = escapeHtml(c.type != null ? String(c.type) : "?");
+							parts.push(
+								"<li><strong>" + escapeHtml(String(c.name != null ? c.name : "")) + "</strong>"
+								+ ' <span class="schema-meta">' + ty + "</span>" + meta + "</li>",
+							);
+						}
+						parts.push("</ul>");
+					} else {
+						parts.push('<p class="schema-meta">(no columns)</p>');
+					}
+					const idxs = Array.isArray(t.indexes) ? t.indexes : [];
+					const secondary = idxs.filter((x) => x && !x.primary);
+					if (secondary.length) {
+						parts.push('<div class="schema-indexes">Indexes: ');
+						parts.push(
+							secondary.map((ix) => {
+								const nm = ix.name ? escapeHtml(String(ix.name)) : "(unnamed)";
+								const col = escapeHtml(String(ix.column != null ? ix.column : ""));
+								const uq = ix.unique ? " unique" : "";
+								return nm + " on " + col + uq;
+							}).join("; "),
+						);
+						parts.push("</div>");
+					}
+					parts.push("</section>");
+				}
+				schemaBodyEl.innerHTML = parts.join("");
+			}
+
+			function clamp(value, min, max) {
+				return Math.min(Math.max(value, min), max);
+			}
+
+			function inferTokenEndColumn(model, lineNumber, startColumn) {
+				const lineText = model.getLineContent(lineNumber);
+				const lineMaxCol = model.getLineMaxColumn(lineNumber);
+				const startIdx = startColumn - 1;
+				if (startIdx < 0 || startIdx >= lineText.length) {
+					return clamp(startColumn + 1, startColumn + 1, lineMaxCol);
+				}
+
+				const firstChar = lineText[startIdx];
+				if (/\s/.test(firstChar)) {
+					return clamp(startColumn + 1, startColumn + 1, lineMaxCol);
+				}
+
+				let endIdx = startIdx + 1;
+
+				if (firstChar === "'" || firstChar === "\"") {
+					const quote = firstChar;
+					while (endIdx < lineText.length) {
+						const ch = lineText[endIdx];
+						endIdx += 1;
+						if (ch === quote) {
+							break;
+						}
+					}
+				} else if (/[A-Za-z0-9_$]/.test(firstChar)) {
+					while (endIdx < lineText.length && /[A-Za-z0-9_$]/.test(lineText[endIdx])) {
+						endIdx += 1;
+					}
+				} else if (/[=><!~?:&|+\-*/^%]/.test(firstChar)) {
+					while (endIdx < lineText.length && /[=><!~?:&|+\-*/^%]/.test(lineText[endIdx])) {
+						endIdx += 1;
+					}
+				}
+
+				return clamp(endIdx + 1, startColumn + 1, lineMaxCol);
+			}
+
+			function toMonacoMarkers(jsonText) {
+				if (!editor) return [];
+				const model = editor.getModel();
+				if (!model) return [];
+				if (!jsonText) return [];
+
+				let diagnostics;
+				try {
+					diagnostics = JSON.parse(jsonText);
+				} catch {
+					return [];
+				}
+				if (!Array.isArray(diagnostics)) return [];
+
+				const maxLine = model.getLineCount();
+				const markers = [];
+
+				for (const diagnostic of diagnostics) {
+					if (!diagnostic || typeof diagnostic !== "object") continue;
+
+					const startLine = clamp(Number(diagnostic.line) || 1, 1, maxLine);
+					const lineMaxCol = model.getLineMaxColumn(startLine);
+					const startColumn = clamp(Number(diagnostic.column) || 1, 1, lineMaxCol);
+
+					const endLineRaw = Number(diagnostic.end_line) || startLine;
+					const endLine = clamp(endLineRaw, startLine, maxLine);
+					const endLineMaxCol = model.getLineMaxColumn(endLine);
+					const minEndColumn = endLine === startLine ? startColumn : 1;
+					const diagnosticEndColumn = Number(diagnostic.end_column);
+					const hasExplicitEndColumn = Number.isFinite(diagnosticEndColumn) && diagnosticEndColumn > 0;
+					const fallbackEndColumn = endLine === startLine
+						? inferTokenEndColumn(model, startLine, startColumn)
+						: startColumn + 1;
+					const endColumn = clamp(
+						hasExplicitEndColumn ? diagnosticEndColumn : fallbackEndColumn,
+						minEndColumn,
+						endLineMaxCol,
+					);
+
+					markers.push({
+						severity: monaco.MarkerSeverity.Error,
+						message: String(diagnostic.message || "SQL error"),
+						startLineNumber: startLine,
+						startColumn: startColumn,
+						endLineNumber: endLine,
+						endColumn: endColumn,
+						source: String(diagnostic.source || "sql"),
+					});
+				}
+
+				return markers;
+			}
+
+			function applyDiagnostics(jsonText) {
+				if (!editor) return;
+				const model = editor.getModel();
+				if (!model) return;
+				monaco.editor.setModelMarkers(model, MARKER_OWNER, toMonacoMarkers(jsonText));
+			}
+
+			function setEmptyTable(msg) {
+				tableEl.hidden = true;
+				tableEl.innerHTML = "";
+				emptyEl.hidden = false;
+				emptyEl.textContent = msg;
+			}
+
+			function renderTable(jsonText) {
+				if (!jsonText) {
+					setEmptyTable("No SELECT result in this batch.");
+					return;
+				}
+
+				let payload;
+				try {
+					payload = JSON.parse(jsonText);
+				} catch (err) {
+					// Some older/broken payloads may miss the opening '[' for array output.
+					// Recovering here keeps the UI usable while backend format stabilizes.
+					try {
+						if (jsonText.trimEnd().endsWith("]")) {
+							payload = JSON.parse("[" + jsonText);
+						} else {
+							throw err;
+						}
+					} catch (fallbackErr) {
+						setEmptyTable("Result JSON parse error: " + String(fallbackErr));
+						return;
+					}
+				}
+
+				let columns = [];
+				let rows = [];
+
+				if (Array.isArray(payload)) {
+					rows = payload.map((row) => (row && typeof row === "object" ? row : {}));
+					const seen = new Set();
+					for (const row of rows) {
+						for (const key of Object.keys(row)) {
+							if (!seen.has(key)) {
+								seen.add(key);
+								columns.push(key);
+							}
+						}
+					}
+				} else if (payload && typeof payload === "object" && Array.isArray(payload.columns) && Array.isArray(payload.rows)) {
+					columns = payload.columns;
+					rows = payload.rows;
+				} else if (payload && typeof payload === "object") {
+					columns = Object.keys(payload);
+					rows = [payload];
+				}
+
+				if (!columns.length) {
+					setEmptyTable("SELECT completed with no columns to render.");
+					return;
+				}
+
+				let html = "<thead><tr>";
+				for (const col of columns) {
+					html += "<th>" + String(col) + "</th>";
+				}
+				html += "</tr></thead><tbody>";
+
+				if (!rows.length) {
+					html += "<tr><td colspan=\"" + columns.length + "\">(0 rows)</td></tr>";
+				} else {
+					for (const row of rows) {
+						html += "<tr>";
+						if (Array.isArray(row)) {
+							for (let i = 0; i < columns.length; i += 1) {
+								const cell = row[i];
+								html += "<td>" + (cell === null || cell === undefined ? "NULL" : String(cell)) + "</td>";
+							}
+						} else {
+							for (const col of columns) {
+								const cell = row[col];
+								html += "<td>" + (cell === null || cell === undefined ? "NULL" : String(cell)) + "</td>";
+							}
+						}
+						html += "</tr>";
+					}
+				}
+				html += "</tbody>";
+
+				tableEl.innerHTML = html;
+				emptyEl.hidden = true;
+				tableEl.hidden = false;
+			}
+
+			async function initWasm() {
+				const wasmInterface = new odin.WasmMemoryInterface();
+				const imports = odin.setupDefaultImports(wasmInterface, null, wasmInterface.memory);
+				const response = await fetch("index.wasm");
+				const file = await response.arrayBuffer();
+				const wasm = await WebAssembly.instantiate(file, imports);
+				wasmExports = wasm.instance.exports;
+				wasmInterface.setExports(wasmExports);
+				if (wasmExports.memory) {
+					wasmInterface.setMemory(wasmExports.memory);
+				}
+				if (wasmExports._start) {
+					wasmExports._start();
+				}
+				refreshMemView();
+				scratchBase = wasmExports.sql_scratch_base();
+				scratchCap = wasmExports.sql_scratch_cap();
+				renderSchemaPanel();
+			}
+
+			require(["vs/editor/editor.main"], async function () {
+				try {
+					EXAMPLES = await loadExamples();
+					setExampleOptions(EXAMPLES);
+				} catch (error) {
+					statusEl.textContent = "Failed to load examples";
+					term.writeln("\x1b[31m" + String(error) + "\x1b[0m");
+					EXAMPLES = [{ id: "fallback", label: "Fallback", code: "SELECT * FROM users;" }];
+					setExampleOptions(EXAMPLES);
+				}
+
+				monaco.languages.setMonarchTokensProvider("sql", {
+					ignoreCase: true,
+					defaultToken: "",
+					tokenPostfix: ".sql",
+					keywords: [
+						"select", "from", "where", "join", "inner", "left", "right", "full", "outer", "cross", "on",
+						"insert", "into", "values", "update", "set", "delete",
+						"create", "table", "drop", "alter", "add",
+						"as", "and", "or", "not", "in", "is", "null", "like", "between", "exists",
+						"group", "by", "having", "order", "asc", "desc", "limit", "offset", "distinct",
+						"union", "all", "case", "when", "then", "else", "end",
+					],
+					operators: [
+						"=", ">", "<", ">=", "<=", "<>", "!=", "+", "-", "*", "/", "%",
+					],
+					tokenizer: {
+						root: [
+							[/--.*$/, "comment"],
+							[/\/\*/, "comment", "@comment"],
+							[/'(?:''|[^'])*'/, "string"],
+							[/"/, "string", "@dblString"],
+							[/\b\d+(?:\.\d+)?\b/, "number"],
+							[/[a-zA-Z_][\w$]*/, { cases: { "@keywords": "keyword", "@default": "identifier" } }],
+							[/[=><!~?:&|+\-*/^%]+/, "operators"],
+							[/[;,.()]/, "delimiter"],
+							[/\s+/, "white"],
+						],
+						comment: [
+							[/[^\/*]+/, "comment"],
+							[/\*\//, "comment", "@pop"],
+							[/[\/*]/, "comment"],
+						],
+						dblString: [
+							[/[^"]+/, "string"],
+							[/"/, "string", "@pop"],
+						],
+					},
+				});
+
+				monaco.editor.defineTheme("sql-playground-dark", {
+					base: "vs-dark",
+					inherit: true,
+					// Keep SQL tokens visually consistent across Monaco's dialect token groups.
+					rules: [
+						{ token: "keyword", foreground: "C586C0" },
+						{ token: "keyword.sql", foreground: "C586C0" },
+						{ token: "keyword.other.sql", foreground: "C586C0" },
+						{ token: "keyword.operator.sql", foreground: "C586C0" },
+						{ token: "type.sql", foreground: "C586C0" },
+						{ token: "tag.sql", foreground: "C586C0" },
+						{ token: "operators.sql", foreground: "808080" },
+						{ token: "delimiter.sql", foreground: "808080" },
+						{ token: "identifier.sql", foreground: "9CDCFE" },
+						{ token: "predefined.sql", foreground: "C586C0" },
+						{ token: "string", foreground: "98C379" },
+						{ token: "string.sql", foreground: "98C379" },
+					],
+					colors: {},
+				});
+
+				editor = monaco.editor.create(document.getElementById("editor"), {
+					value: EXAMPLES[0].code,
+					language: "sql",
+					theme: "sql-playground-dark",
+					automaticLayout: true,
+					minimap: { enabled: false },
+					fontSize: 14,
+				});
+
+				examplesEl.addEventListener("change", () => {
+					const selected = EXAMPLES.find((x) => x.id === examplesEl.value);
+					if (!selected) return;
+					editor.setValue(selected.code);
+					// Old error squiggles stick to the model; clear them so the new snippet does not inherit a prior Run's markers.
+					applyDiagnostics("[]");
+					editor.focus();
+				});
+
+				try {
+					await initWasm();
+				} catch (error) {
+					statusEl.textContent = "WASM failed to load";
+					term.writeln("\x1b[31m" + String(error) + "\x1b[0m");
+					return;
+				}
+
+				runBtn.disabled = false;
+				resetDbBtn.disabled = false;
+				statusEl.textContent = "Ready";
+				setEmptyTable("Run a SELECT query to render rows.");
+
+				resetDbBtn.addEventListener("click", () => {
+					if (!wasmExports.sql_reset_db) {
+						term.writeln("\x1b[31msql_reset_db is missing from this WASM build.\x1b[0m");
+						return;
+					}
+					if (!confirm("Reset the database to the initial sample data? All changes from this session will be lost.")) {
+						return;
+					}
+					wasmExports.sql_reset_db();
+					term.clear();
+					const resetOut = readWasmString(
+						wasmExports.sql_last_out_ptr(),
+						wasmExports.sql_last_out_len(),
+					);
+					if (resetOut) {
+						term.write(resetOut.replace(/\n/g, "\r\n"));
+						if (!resetOut.endsWith("\n")) term.write("\r\n");
+					}
+					applyDiagnostics("[]");
+					setEmptyTable("Run a SELECT query to render rows.");
+					renderSchemaPanel();
+					statusEl.textContent = "Ready";
+				});
+
+				runBtn.addEventListener("click", () => {
+					const source = editor.getValue();
+					const encoded = new TextEncoder().encode(source);
+
+					if (encoded.length > scratchCap) {
+						term.writeln("\x1b[31mInput too large (" + encoded.length + " bytes, cap: " + scratchCap + ").\x1b[0m");
+						return;
+					}
+
+					if (memU8.buffer !== wasmExports.memory.buffer) {
+						refreshMemView();
+					}
+					memU8.set(encoded, scratchBase);
+
+					runBtn.disabled = true;
+					statusEl.textContent = "Running...";
+					const t0 = performance.now();
+					const code = wasmExports.sql_run(encoded.length);
+					const elapsedMs = performance.now() - t0;
+					runBtn.disabled = false;
+
+					const outText = readWasmString(
+						wasmExports.sql_last_out_ptr(),
+						wasmExports.sql_last_out_len(),
+					);
+					const jsonText = readWasmString(
+						wasmExports.sql_last_json_ptr(),
+						wasmExports.sql_last_json_len(),
+					);
+					// console.log("jsonText: ", jsonText);
+
+					term.clear();
+					if (outText) {
+						term.write(outText.replace(/\n/g, "\r\n"));
+						if (!outText.endsWith("\n")) term.write("\r\n");
+					}
+					term.writeln((code === 0 ? "\x1b[92m" : "\x1b[91m") + "Finished in " + elapsedMs.toFixed(2) + " ms" + "\x1b[0m");
+
+					const diagnosticsText = readWasmString(
+						wasmExports.sql_last_diagnostics_ptr(),
+						wasmExports.sql_last_diagnostics_len(),
+					);
+					applyDiagnostics(diagnosticsText);
+
+					renderTable(jsonText);
+					renderSchemaPanel();
+					statusEl.textContent = code === 0 ? "OK" : "Error";
+				});
+			});
+		})();
+	</script>
+</body>
+
+</html>

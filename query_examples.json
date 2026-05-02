@@ -1,0 +1,283 @@
+[
+    {
+        "id": "basic-select-all",
+        "label": "Basics: select all users",
+        "code": [
+            "SELECT * FROM users;"
+        ]
+    },
+    {
+        "id": "basic-filter-order-limit",
+        "label": "Basics: filter + order + limit",
+        "code": [
+            "SELECT id, name, age, status",
+            "FROM users",
+            "WHERE age >= 28 AND status != 'inactive'",
+            "ORDER BY age DESC, name ASC",
+            "LIMIT 4;"
+        ]
+    },
+    {
+        "id": "basic-arithmetic-aliases",
+        "label": "Basics: arithmetic projections and aliases",
+        "code": [
+            "SELECT",
+            "  id AS user_id,",
+            "  name AS user_name,",
+            "  age + 5 age_in_5_years",
+            "FROM users AS u",
+            "ORDER BY id;"
+        ]
+    },
+    {
+        "id": "join-inner-users-orders",
+        "label": "Join: users and orders (INNER JOIN)",
+        "code": [
+            "SELECT u.name, o.id AS order_id, o.product, o.amount",
+            "FROM users u",
+            "JOIN orders o ON u.id = o.user_id",
+            "ORDER BY o.amount DESC, o.id ASC;"
+        ]
+    },
+    {
+        "id": "join-left-payments-shipments",
+        "label": "Join: payments and shipments (LEFT JOIN)",
+        "code": [
+            "SELECT",
+            "  o.id AS order_id,",
+            "  o.product,",
+            "  p.status AS payment_status,",
+            "  s.state AS shipment_state",
+            "FROM orders o",
+            "LEFT JOIN payments p ON o.id = p.order_id",
+            "LEFT JOIN shipments s ON o.id = s.order_id",
+            "ORDER BY o.id;"
+        ]
+    },
+    {
+        "id": "join-cross-preview",
+        "label": "Join: CROSS JOIN preview (first rows)",
+        "code": [
+            "SELECT u.name, s.carrier",
+            "FROM users u",
+            "CROSS JOIN shipments s",
+            "ORDER BY u.name ASC, s.carrier ASC",
+            "LIMIT 12;"
+        ]
+    },
+    {
+        "id": "subquery-in-orders",
+        "label": "Subquery: users with high-value orders",
+        "code": [
+            "SELECT id, name, status",
+            "FROM users",
+            "WHERE id IN (",
+            "  SELECT user_id FROM orders WHERE amount >= 200",
+            ")",
+            "ORDER BY id;"
+        ]
+    },
+    {
+        "id": "subquery-derived-table",
+        "label": "Subquery: derived table with ORDER/LIMIT",
+        "code": [
+            "SELECT user_id, amount",
+            "FROM (",
+            "  SELECT user_id, amount",
+            "  FROM orders",
+            "  ORDER BY amount DESC",
+            "  LIMIT 3",
+            ") AS top_orders",
+            "ORDER BY amount DESC;"
+        ]
+    },
+    {
+        "id": "subquery-double-nested",
+        "label": "Subquery: double nested (payments -> orders)",
+        "code": [
+            "SELECT id, name, status",
+            "FROM users",
+            "WHERE id IN (",
+            "  SELECT payer_user_id FROM payments",
+            "  WHERE order_id IN (",
+            "    SELECT id FROM orders WHERE amount >= 200",
+            "  )",
+            ")",
+            "ORDER BY id;"
+        ]
+    },
+    {
+        "id": "aggregate-count-sum",
+        "label": "Aggregation: count and sum by user",
+        "code": [
+            "SELECT",
+            "  o.user_id,",
+            "  COUNT(*) AS orders_count,",
+            "  SUM(o.amount) AS total_amount",
+            "FROM orders o",
+            "GROUP BY o.user_id",
+            "ORDER BY total_amount DESC, o.user_id ASC;"
+        ]
+    },
+    {
+        "id": "aggregate-having",
+        "label": "Aggregation: HAVING with COUNT(*)",
+        "code": [
+            "SELECT user_id, COUNT(*) AS order_count",
+            "FROM orders",
+            "GROUP BY user_id",
+            "HAVING COUNT(*) > 1",
+            "ORDER BY user_id;"
+        ]
+    },
+    {
+        "id": "aggregate-joined-revenue",
+        "label": "Aggregation: settled payment totals",
+        "code": [
+            "SELECT",
+            "  payments.payer_user_id,",
+            "  SUM(payments.amount) AS settled_total",
+            "FROM payments",
+            "WHERE payments.status = 'settled'",
+            "GROUP BY payments.payer_user_id",
+            "HAVING SUM(payments.amount) >= 180",
+            "ORDER BY payments.payer_user_id;"
+        ]
+    },
+    {
+        "id": "dml-batch-insert-update-delete",
+        "label": "DML batch: insert + update + delete + select",
+        "code": [
+            "INSERT INTO users VALUES (7, 'Gina', 33, 'active');",
+            "INSERT INTO users VALUES (8, 'Hank', 27, 'trial');",
+            "UPDATE users SET status = 'vip' WHERE id = 7;",
+            "DELETE FROM users WHERE id = 8;",
+            "SELECT id, name, age, status FROM users WHERE id >= 7 ORDER BY id;"
+        ]
+    },
+    {
+        "id": "dml-update-join-check",
+        "label": "DML + join check: mark and inspect records",
+        "code": [
+            "UPDATE payments SET status = 'settled' WHERE order_id = 106;",
+            "SELECT",
+            "  o.id AS order_id,",
+            "  o.product,",
+            "  p.status,",
+            "  p.method",
+            "FROM orders o",
+            "JOIN payments p ON o.id = p.order_id",
+            "WHERE o.id = 106;"
+        ]
+    },
+    {
+        "id": "ddl-create-alter-index",
+        "label": "DDL: create table + alter + index + query",
+        "code": [
+            "DROP TABLE IF EXISTS inventory_demo;",
+            "CREATE TABLE inventory_demo (item_id INTEGER, description TEXT, quantity INT, PRIMARY KEY(item_id));",
+            "INSERT INTO inventory_demo VALUES (1, 'SSD 1TB', 5);",
+            "INSERT INTO inventory_demo VALUES (2, 'USB-C dock', 14);",
+            "ALTER TABLE inventory_demo ADD COLUMN warehouse TEXT;",
+            "UPDATE inventory_demo SET warehouse = 'WAW-1' WHERE item_id = 1;",
+            "UPDATE inventory_demo SET warehouse = 'BER-2' WHERE item_id = 2;",
+            "CREATE INDEX inventory_demo_qty_idx ON inventory_demo (quantity);",
+            "SELECT item_id, description, quantity, warehouse FROM inventory_demo ORDER BY quantity DESC;"
+        ]
+    },
+    {
+        "id": "ddl-rename-column",
+        "label": "DDL: rename column and read it back",
+        "code": [
+            "DROP TABLE IF EXISTS customers_demo;",
+            "CREATE TABLE customers_demo (id INTEGER, name TEXT, PRIMARY KEY(id));",
+            "INSERT INTO customers_demo VALUES (1, 'Ann');",
+            "INSERT INTO customers_demo VALUES (2, 'Ben');",
+            "ALTER TABLE customers_demo RENAME COLUMN name TO full_name;",
+            "SELECT id, full_name FROM customers_demo ORDER BY id;"
+        ]
+    },
+    {
+        "id": "tx-commit-flow",
+        "label": "Transactions: BEGIN + COMMIT",
+        "code": [
+            "DROP TABLE IF EXISTS tx_users_demo;",
+            "CREATE TABLE tx_users_demo (id INTEGER, name TEXT, PRIMARY KEY(id));",
+            "BEGIN;",
+            "INSERT INTO tx_users_demo VALUES (1, 'Committed Alice');",
+            "INSERT INTO tx_users_demo VALUES (2, 'Committed Bob');",
+            "COMMIT;",
+            "SELECT * FROM tx_users_demo ORDER BY id;"
+        ]
+    },
+    {
+        "id": "tx-rollback-flow",
+        "label": "Transactions: BEGIN + ROLLBACK",
+        "code": [
+            "DROP TABLE IF EXISTS tx_rollback_demo;",
+            "CREATE TABLE tx_rollback_demo (id INTEGER, name TEXT, PRIMARY KEY(id));",
+            "BEGIN;",
+            "INSERT INTO tx_rollback_demo VALUES (1, 'Will be rolled back');",
+            "ROLLBACK;",
+            "SELECT * FROM tx_rollback_demo ORDER BY id;"
+        ]
+    },
+    {
+        "id": "comprehensive-order-lifecycle",
+        "label": "Comprehensive: order lifecycle walkthrough",
+        "code": [
+            "DROP TABLE IF EXISTS demo_users;",
+            "DROP TABLE IF EXISTS demo_orders;",
+            "DROP TABLE IF EXISTS demo_payments;",
+            "CREATE TABLE demo_users (id INTEGER, name TEXT, tier TEXT, PRIMARY KEY(id));",
+            "CREATE TABLE demo_orders (id INTEGER, user_id INTEGER, product TEXT, amount INTEGER, PRIMARY KEY(id));",
+            "CREATE TABLE demo_payments (id INTEGER, order_id INTEGER, payer_user_id INTEGER, method TEXT, status TEXT, amount INTEGER, PRIMARY KEY(id));",
+            "INSERT INTO demo_users VALUES (1, 'Ava', 'gold');",
+            "INSERT INTO demo_users VALUES (2, 'Liam', 'silver');",
+            "INSERT INTO demo_users VALUES (3, 'Noah', 'gold');",
+            "INSERT INTO demo_orders VALUES (1001, 1, 'Laptop', 450);",
+            "INSERT INTO demo_orders VALUES (1002, 1, 'Mouse', 70);",
+            "INSERT INTO demo_orders VALUES (1003, 2, 'Desk', 420);",
+            "INSERT INTO demo_orders VALUES (1004, 3, 'Keyboard', 120);",
+            "INSERT INTO demo_payments VALUES (7001, 1001, 1, 'card', 'settled', 450);",
+            "INSERT INTO demo_payments VALUES (7002, 1002, 1, 'wallet', 'failed', 70);",
+            "INSERT INTO demo_payments VALUES (7003, 1003, 2, 'bank', 'settled', 420);",
+            "INSERT INTO demo_payments VALUES (7004, 1004, 3, 'card', 'pending', 120);",
+            "UPDATE demo_payments SET status = 'settled' WHERE id = 7004;",
+            "SELECT",
+            "  payer_user_id AS user_id,",
+            "  COUNT(*) AS settled_orders,",
+            "  SUM(amount) AS settled_amount",
+            "FROM demo_payments",
+            "WHERE demo_payments.status = 'settled'",
+            "GROUP BY payer_user_id",
+            "HAVING SUM(amount) >= 200;"
+        ]
+    },
+    {
+        "id": "comprehensive-schema-evolution",
+        "label": "Comprehensive: schema evolution + reporting",
+        "code": [
+            "DROP TABLE IF EXISTS demo_metrics;",
+            "CREATE TABLE demo_metrics (id INTEGER, grp INTEGER, score INTEGER, PRIMARY KEY(id));",
+            "INSERT INTO demo_metrics VALUES (1, 1, 10);",
+            "INSERT INTO demo_metrics VALUES (2, 1, 25);",
+            "INSERT INTO demo_metrics VALUES (3, 2, 40);",
+            "INSERT INTO demo_metrics VALUES (4, 2, 55);",
+            "ALTER TABLE demo_metrics ADD COLUMN status TEXT;",
+            "UPDATE demo_metrics SET status = 'low' WHERE score < 20;",
+            "UPDATE demo_metrics SET status = 'mid' WHERE score >= 20 AND score < 50;",
+            "UPDATE demo_metrics SET status = 'high' WHERE score >= 50;",
+            "CREATE INDEX demo_metrics_grp_idx ON demo_metrics (grp);",
+            "SELECT",
+            "  grp,",
+            "  status,",
+            "  COUNT(*) AS rows_in_bucket,",
+            "  SUM(score) AS total_score",
+            "FROM demo_metrics",
+            "GROUP BY grp, status",
+            "HAVING COUNT(*) >= 1",
+            "ORDER BY grp ASC, status ASC;"
+        ]
+    }
+]

@@ -1,184 +1,140 @@
-#+feature dynamic-literals
+#+vet explicit-allocators
+
 package main
 
-import "core:bufio"
+// import "back"
+import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:os"
+import "core:mem"
 import "core:strings"
 
-import "back"
+split_exec_statements :: proc(sql: string, query_allocator: mem.Allocator) -> []string {
+	statements := make([dynamic]string, query_allocator)
 
-// TODO: pretty ugly output of tables in repl
+	start := 0
+	in_single := false
+	in_double := false
+	escape_next := false
 
-/*
-- In-memory only (no persistence)
-- No transactions or ACID guarantees
-- No indexes (linear scans for all queries)
-- Limited data type system
-- No GROUP BY, ORDER BY, or LIMIT (yet)
-- No aggregate functions (COUNT, SUM, AVG, etc.)
-- No ALTER TABLE or DROP TABLE
-- ORDER BY and LIMIT clauses
-- Aggregate functions
-- GROUP BY and HAVING
-- More JOIN types (FULL OUTER, CROSS)
-- Subqueries in WHERE clauses (IN subqueries partially supported)
-- Table persistence (file I/O)
-- Indexes for performance
-- More sophisticated type system
-- Better error messages with line/column info
-*/
+	for ch, ch_i in sql {
+		switch {
+		case escape_next:
+			escape_next = false
 
-main :: proc() {
-	context.logger = log.create_console_logger()
-	context.assertion_failure_proc = back.assertion_failure_proc
-	// assert(3 == 2)
-	repl()
+		case ch == '\\' && (in_single || in_double):
+			escape_next = true
+
+		case ch == '\'' && !in_double:
+			in_single = !in_single
+
+		case ch == '"' && !in_single:
+			in_double = !in_double
+
+		case ch == ';' && !in_single && !in_double:
+			statement := strings.trim_space(sql[start:ch_i])
+			if len(statement) > 0 do append(&statements, statement)
+			start = ch_i + 1
+		}
+	}
+
+	last_statement := strings.trim_space(sql[start:])
+	if len(last_statement) > 0 do append(&statements, last_statement)
+
+	return statements[:]
 }
 
-repl :: proc() {
-	fmt.println("SQL Impostor REPL - Type 'exit' to quit, 'help' for commands")
-	fmt.println("Sample tables: users, orders (if created)")
+Msg_Source :: enum {
+	Tokenizer,
+	Parser,
+	Database,
+}
 
-	repl_db: DB
-	database_init(&repl_db)
+@(thread_local)
+msgs_builder: strings.Builder
 
-	users_table := DB_Table {
-		name         = "users",
-		column_names = {"id", "name", "age", "status"},
-		primary_key  = "id",
-		rows         = make([dynamic]DB_Row),
+@(thread_local)
+had_error_msg: bool
+
+// TODO: use dynamic arena instead
+@(thread_local)
+query_arena_buffer: [1024 * 1024 * 1024]byte
+@(thread_local)
+query_arena: mem.Arena
+
+// @(init)
+main_init :: proc() {
+	when !ODIN_TEST {
+		context.logger = log.create_console_logger(allocator = context.allocator)
 	}
-	append_elem(
-		&users_table.rows,
-		DB_Row{"id" = 1, "name" = "Alice", "age" = 25, "status" = "active"},
-	)
-	append_elem(
-		&users_table.rows,
-		DB_Row{"id" = 2, "name" = "Bob", "age" = 30, "status" = "inactive"},
-	)
-	append_elem(
-		&users_table.rows,
-		DB_Row{"id" = 3, "name" = "Charlie", "age" = 35, "status" = "active"},
-	)
-	repl_db.tables["users"] = users_table
+	mem.arena_init(&query_arena, query_arena_buffer[:])
+	database_query_allocator = mem.arena_allocator(&query_arena)
+	strings.builder_init(&msgs_builder, mem.arena_allocator(&query_arena)) // my_context = context
+}
 
-	orders_table := DB_Table {
-		name         = "orders",
-		column_names = {"id", "user_id", "product", "amount"},
-		primary_key  = "id",
-		rows         = make([dynamic]DB_Row),
+// @(fini)
+main_finish :: proc() {
+	strings.builder_destroy(&msgs_builder)
+	delete_all_tables()
+	when !ODIN_TEST {
+		log.destroy_console_logger(context.logger, context.allocator)
 	}
-	append_elem(
-		&orders_table.rows,
-		DB_Row{"id" = 101, "user_id" = 1, "product" = "Widget", "amount" = 100},
-	)
-	append_elem(
-		&orders_table.rows,
-		DB_Row{"id" = 102, "user_id" = 2, "product" = "Gadget", "amount" = 200},
-	)
-	append_elem(
-		&orders_table.rows,
-		DB_Row{"id" = 103, "user_id" = 1, "product" = "Tool", "amount" = 150},
-	)
-	repl_db.tables["orders"] = orders_table
+	free_all(database_query_allocator)
+	mem.arena_free_all(&query_arena)
+}
 
-	stdin_reader: bufio.Reader
-	bufio.reader_init(&stdin_reader, os.stream_from_handle(os.stdin))
-	defer bufio.reader_destroy(&stdin_reader)
+msgs_clear :: proc() {
+	strings.builder_reset(&msgs_builder)
+	had_error_msg = false
+}
 
-	for {
-		fmt.print("\nsql> ")
-		query_bytes, err := bufio.reader_read_string(&stdin_reader, '\n')
-		if err != nil && err != .None {
-			break
-		}
+Msg_Kind :: enum {
+	Error,
+	Info,
+}
 
-		query := strings.trim_space(string(query_bytes))
-		query_lower := strings.to_lower(query, context.temp_allocator)
-
-		if query_lower == "exit" {
-			fmt.println("Goodbye!")
-			break
-		} else if query_lower == "help" {
-			fmt.println("Commands:")
-			fmt.println("  exit - quit the REPL")
-			fmt.println("  help - show this help")
-			fmt.println("  tables - show available tables")
-			fmt.println("  sample - show sample queries")
-			fmt.println("  Any SQL query (SELECT, INSERT, UPDATE, DELETE, CREATE TABLE)")
-			continue
-		} else if query_lower == "tables" {
-			fmt.println("Available tables:")
-			for table_name, table in repl_db.tables {
-				fmt.printf("  %s: %v\n", table_name, table.column_names)
-			}
-			continue
-		} else if query_lower == "sample" {
-			fmt.println("Sample queries:")
-			fmt.println("  SELECT * FROM users")
-			fmt.println("  SELECT * FROM users WHERE age > 25")
-			fmt.println("  SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)")
-			fmt.println("  SELECT * FROM users WHERE name IN ('Alice', 'Bob')")
-			fmt.println("  INSERT INTO users VALUES (4, 'David', 40, 'active')")
-			continue
-		} else if len(query) == 0 {
-			continue
-		}
-
-		result, ok := exec_query(&repl_db, query)
-
-		if !ok {
-			fmt.println("Error: Query execution failed")
-			continue
-		}
-
-		switch r in result {
-		case int:
-			fmt.printf("Query executed successfully. Rows affected: %d\n", r)
-		case [dynamic]DB_Row:
-			if len(r) == 0 {
-				fmt.println("No results")
-			} else {
-				for row, i in r {
-					if i == 0 {
-						first_row := true
-						for key in row {
-							if !first_row do fmt.print(" | ")
-							fmt.printf("%10s", key)
-							first_row = false
-						}
-						fmt.println()
-
-						header_len := len(row) * 12 - 2
-						for j := 0; j < header_len; j += 1 {
-							fmt.print("-")
-						}
-						fmt.println()
-					}
-
-					first_val := true
-					for _, value in row {
-						if !first_val do fmt.print(" | ")
-						switch v in value {
-						case string:
-							fmt.printf("%10s", v)
-						case int:
-							fmt.printf("%10d", v)
-						case f64:
-							fmt.printf("%10.2f", v)
-						case bool:
-							fmt.printf("%10v", v)
-						case Nil:
-							fmt.printf("%10s", "NULL")
-						}
-						first_val = false
-					}
-					fmt.println()
-				}
-				fmt.printf("\n%d row(s) returned\n", len(r))
-			}
-		}
+msgf :: proc(
+	kind: Msg_Kind,
+	from: Msg_Source,
+	format: string,
+	args: ..any,
+	loc := #caller_location,
+) {
+	source_color := "\x1b[0m"
+	switch from {
+	case .Tokenizer:
+		source_color = "\x1b[96m"
+	case .Parser:
+		source_color = "\x1b[95m"
+	case .Database:
+		source_color = "\x1b[91m"
 	}
+
+	switch kind {
+	case .Error:
+		// TODO: make it red
+		// TODO: use log.errorf, but only call it if a global expect_errors if not true. (in order to not make tests fail due to calling log.error when an error is actually expected)
+		log.warnf(
+			"%s[%v]\x1b[0m %s",
+			source_color,
+			from,
+			fmt.tprintf(format, ..args),
+			location = loc,
+		)
+	case .Info:
+		log.infof(
+			"%s[%v]\x1b[0m %s",
+			source_color,
+			from,
+			fmt.tprintf(format, ..args),
+			location = loc,
+		)
+	}
+
+	// TODO: make it red if error
+	fmt.sbprintf(&msgs_builder, "%s[%v]\x1b[0m ", source_color, from)
+	fmt.sbprintf(&msgs_builder, format, ..args)
+	fmt.sbprintln(&msgs_builder)
+
+	had_error_msg = true
 }

@@ -1,7 +1,7 @@
+#+vet explicit-allocators
+
 package main
 
-import "core:fmt"
-import "core:log"
 import "core:strings"
 
 Token_Kind :: enum u8 {
@@ -38,7 +38,12 @@ Token_Kind :: enum u8 {
 	Select,
 	From,
 	Where,
+	Group_By,
+	Having,
 	Order_By,
+	Asc,
+	Desc,
+	As,
 	Limit,
 	Offset,
 	Insert,
@@ -48,11 +53,24 @@ Token_Kind :: enum u8 {
 	Set,
 	Delete,
 	Create,
+	Alter,
+	Drop,
+	Begin,
+	Commit,
+	Rollback,
 	Table,
+	If,
+	Exists,
+	Add,
+	Rename,
+	Column,
+	To,
+	Index,
 	Join,
 	Inner,
 	Left,
 	Right,
+	Cross,
 	On,
 	Primary,
 	Key,
@@ -65,6 +83,8 @@ Token_Kind :: enum u8 {
 Token :: struct {
 	line:   u16,
 	column: u16,
+	start:  int, // byte offset into original query, inclusive
+	end:    int, // byte offset into original query, exclusive
 	kind:   Token_Kind,
 	text:   string, // a slice from the original source code. don't deallocate the source code before tokens are processed.
 }
@@ -94,15 +114,26 @@ is_newline :: proc(ch: u8) -> bool {
 }
 
 keyword_from_string :: proc(s: string) -> (Token_Kind, bool) {
-	switch strings.to_upper(s, context.temp_allocator) {
+	// TODO: could do char-by-char case-insenstive comparison instead...
+	switch strings.to_upper(s, database_query_allocator) {
 	case "SELECT":
 		return .Select, true
 	case "FROM":
 		return .From, true
 	case "WHERE":
 		return .Where, true
+	case "GROUP BY":
+		return .Group_By, true
+	case "HAVING":
+		return .Having, true
 	case "ORDER BY":
 		return .Order_By, true
+	case "ASC":
+		return .Asc, true
+	case "DESC":
+		return .Desc, true
+	case "AS":
+		return .As, true
 	case "LIMIT":
 		return .Limit, true
 	case "OFFSET":
@@ -121,8 +152,32 @@ keyword_from_string :: proc(s: string) -> (Token_Kind, bool) {
 		return .Delete, true
 	case "CREATE":
 		return .Create, true
+	case "ALTER":
+		return .Alter, true
+	case "DROP":
+		return .Drop, true
+	case "BEGIN":
+		return .Begin, true
+	case "COMMIT":
+		return .Commit, true
+	case "ROLLBACK":
+		return .Rollback, true
 	case "TABLE":
 		return .Table, true
+	case "IF":
+		return .If, true
+	case "EXISTS":
+		return .Exists, true
+	case "ADD":
+		return .Add, true
+	case "RENAME":
+		return .Rename, true
+	case "COLUMN":
+		return .Column, true
+	case "TO":
+		return .To, true
+	case "INDEX":
+		return .Index, true
 	case "JOIN":
 		return .Join, true
 	case "INNER":
@@ -131,6 +186,8 @@ keyword_from_string :: proc(s: string) -> (Token_Kind, bool) {
 		return .Left, true
 	case "RIGHT":
 		return .Right, true
+	case "CROSS":
+		return .Cross, true
 	case "ON":
 		return .On, true
 	case "PRIMARY":
@@ -166,10 +223,8 @@ keyword_from_string :: proc(s: string) -> (Token_Kind, bool) {
 }
 
 // TODO: `column` counter is completely wrong for non-ASCII UTF-8 runes. maybe it would be worth it to handle runes instead of bytes.
-tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic]Token, ok: bool) {
-	context.allocator = allocator
-
-	result := make([dynamic]Token)
+tokenize :: proc(s: string) -> (result: [dynamic]Token, ok: bool) {
+	result = make([dynamic]Token, database_query_allocator)
 	i := 0
 	line := 1
 	column := 1
@@ -177,58 +232,67 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 	for i < len(s) {
 		ch := s[i]
 
-		// handle newline
-		if is_newline(ch) {
-			i += 1
-			line += 1
-			column = 1
-			continue
-		}
+		switch {
 
-		// skip whitespace
-		if is_whitespace(ch) {
-			start := i
-			for i < len(s) && is_whitespace(s[i]) && !is_newline(s[i]) {
+		// skip newlines (CRLF counts as one line break, not two)
+		case is_newline(ch):
+			i += 1
+			if ch == '\r' && i < len(s) && s[i] == '\n' {
 				i += 1
 			}
+			line += 1
+			column = 1
+
+		// skip whitespace
+		case is_whitespace(ch):
+			start := i
+			for i < len(s) && is_whitespace(s[i]) && !is_newline(s[i]) do i += 1
 			column += i - start
-			continue
-		}
+
+		// SQL `--` line comments: skip through end of line; leave the newline for the branch above
+		case i + 1 < len(s) && ch == '-' && s[i + 1] == '-':
+			i += 2
+			column += 2
+			for i < len(s) && !is_newline(s[i]) {
+				i += 1
+				column += 1
+			}
 
 		// get a number token
-		if is_digit(ch) {
+		case is_digit(ch):
 			start_pos := i
 			start_col := column
 
-			for i < len(s) && is_digit(s[i]) {
-				i += 1
-			}
+			for i < len(s) && is_digit(s[i]) do i += 1
 
 			if i < len(s) && s[i] == '.' && i + 1 < len(s) && is_digit(s[i + 1]) {
 				i += 1
-				for i < len(s) && is_digit(s[i]) {
-					i += 1
-				}
+				for i < len(s) && is_digit(s[i]) do i += 1
 			}
 
 			text := s[start_pos:i]
 			column += len(text)
 			append(
 				&result,
-				Token{line = u16(line), column = u16(start_col), kind = .Number, text = text},
+				Token {
+					line = u16(line),
+					column = u16(start_col),
+					start = start_pos,
+					end = i,
+					kind = .Number,
+					text = text,
+				},
 			)
-			continue
-		}
 
-		// handle special characters
-		if ch == '(' ||
-		   ch == ')' ||
-		   ch == '*' ||
-		   ch == ';' ||
-		   ch == ',' ||
-		   ch == '+' ||
-		   ch == '-' ||
-		   ch == '/' {
+		// handle some one-character special characters
+		case ch == '(' ||
+		     ch == ')' ||
+		     ch == '*' ||
+		     ch == ';' ||
+		     ch == ',' ||
+		     ch == '+' ||
+		     ch == '-' ||
+		     ch == '/':
 			kind: Token_Kind
 			switch ch {
 			case '(':
@@ -252,92 +316,109 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 			}
 			append(
 				&result,
-				Token{line = u16(line), column = u16(column), kind = kind, text = s[i:i + 1]},
+				Token {
+					line = u16(line),
+					column = u16(column),
+					start = i,
+					end = i + 1,
+					kind = kind,
+					text = s[i:i + 1],
+				},
 			)
 			i += 1
 			column += 1
-			continue
-		}
 
 		// handle == and !=
-		if i + 1 < len(s) && (s[i:i + 2] == "==" || s[i:i + 2] == "!=") {
+		case i + 1 < len(s) && (s[i:i + 2] == "==" || s[i:i + 2] == "!="):
 			kind := s[i:i + 2] == "==" ? Token_Kind.Equals : Token_Kind.Not_Equals
-			append(
-				&result,
-				Token{line = u16(line), column = u16(column), kind = kind, text = s[i:i + 2]},
-			)
-			i += 2
-			column += 2
-			continue
-		}
-
-		// handle <>
-		if i + 1 < len(s) && s[i:i + 2] == "<>" {
 			append(
 				&result,
 				Token {
 					line = u16(line),
 					column = u16(column),
+					start = i,
+					end = i + 2,
+					kind = kind,
+					text = s[i:i + 2],
+				},
+			)
+			i += 2
+			column += 2
+
+		// handle <>
+		case i + 1 < len(s) && s[i:i + 2] == "<>":
+			append(
+				&result,
+				Token {
+					line = u16(line),
+					column = u16(column),
+					start = i,
+					end = i + 2,
 					kind = .Not_Equals,
 					text = s[i:i + 2],
 				},
 			)
 			i += 2
 			column += 2
-			continue
-		}
 
 		// handle =
-		if ch == '=' {
+		case ch == '=':
 			append(
 				&result,
-				Token{line = u16(line), column = u16(column), kind = .Equals, text = s[i:i + 1]},
+				Token {
+					line = u16(line),
+					column = u16(column),
+					start = i,
+					end = i + 1,
+					kind = .Equals,
+					text = s[i:i + 1],
+				},
 			)
 			i += 1
 			column += 1
-			continue
-		}
 
 		// handle <=, >=, <, >
-		if ch == '<' || ch == '>' {
+		case ch == '<' || ch == '>':
 			start_col := column
 			start_pos := i
 			i += 1
 			column += 1
 
-			if i < len(s) && s[i] == '=' {
+			switch {
+			case i < len(s) && s[i] == '=':
 				kind := ch == '<' ? Token_Kind.Lt_Eq : Token_Kind.Gt_Eq
 				append(
 					&result,
 					Token {
 						line = u16(line),
 						column = u16(start_col),
+						start = start_pos,
+						end = i + 1,
 						kind = kind,
 						text = s[start_pos:i + 1],
 					},
 				)
 				i += 1
 				column += 1
-			} else {
+			case:
 				kind := ch == '<' ? Token_Kind.Less_Than : Token_Kind.Greater_Than
 				append(
 					&result,
 					Token {
 						line = u16(line),
 						column = u16(start_col),
+						start = start_pos,
+						end = i,
 						kind = kind,
 						text = s[start_pos:i],
 					},
 				)
 			}
-			continue
-		}
 
 		// handle string literals
-		if ch == '\'' || ch == '"' {
+		case ch == '\'' || ch == '"':
 			str_char := ch
 			start_col := column
-			start_pos := i
 			i += 1
 			column += 1
 			content_start := i
@@ -359,27 +440,64 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 				Token {
 					line = u16(line),
 					column = u16(start_col),
+					start = content_start,
+					end = content_end,
 					kind = .String,
 					text = s[content_start:content_end],
 				},
 			)
-			continue
-		}
 
-		// miscellaneous
-		if is_letter(ch) {
+		// handle custom metadata/tags
+		case ch == '@':
 			start_pos := i
-			kw_or_ident_col := column
+			start_col := column
+			i += 1
+			for i < len(s) && is_ident_char(s[i]) do i += 1
 
-			for i < len(s) && is_ident_char(s[i]) {
-				i += 1
+			if i == start_pos + 1 {
+				msgf(
+					.Error,
+					.Tokenizer,
+					"Unexpected character at %v:%v-%v:%v %c",
+					line,
+					column,
+					line,
+					column + 1,
+					ch,
+				)
+				return
 			}
 
 			text := s[start_pos:i]
-			text_upper := strings.to_upper(text, context.temp_allocator)
 
-			// handle ORDER BY
-			if text_upper == "ORDER" && i < len(s) && s[i] == ' ' {
+			append(
+				&result,
+				Token {
+					line = u16(line),
+					column = u16(start_col),
+					start = start_pos,
+					end = i,
+					kind = .Ident,
+					text = text,
+				},
+			)
+
+			column += len(text)
+
+		case is_letter(ch):
+			// handle keywords or identifiers
+			start_pos := i
+			kw_or_ident_col := column
+
+			for i < len(s) && is_ident_char(s[i]) do i += 1
+
+			text := s[start_pos:i]
+
+			// TODO: could do char-by-char case-insenstive comparison instead...
+			text_upper := strings.to_upper(text, database_query_allocator)
+
+			// handle ORDER BY / GROUP BY
+			if (text_upper == "ORDER" || text_upper == "GROUP") && i < len(s) && s[i] == ' ' {
 				for i < len(s) && is_whitespace(s[i]) {
 					i += 1
 					column += 1
@@ -387,24 +505,36 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 
 				if i < len(s) && is_letter(s[i]) {
 					by_start := i
-					for i < len(s) && is_ident_char(s[i]) {
-						i += 1
-					}
+					for i < len(s) && is_ident_char(s[i]) do i += 1
 					by_text := s[by_start:i]
-					by_upper := strings.to_upper(by_text, context.temp_allocator)
+					by_upper := strings.to_upper(by_text, database_query_allocator)
 
 					if by_upper == "BY" {
 						full_text := s[start_pos:i]
 						column += len(text) + len(by_text)
+
+						by_kind: Token_Kind
+						switch text_upper {
+						case "GROUP":
+							by_kind = .Group_By
+						case "ORDER":
+							by_kind = .Order_By
+						case:
+							unreachable()
+						}
+
 						append(
 							&result,
 							Token {
 								line = u16(line),
 								column = u16(kw_or_ident_col),
-								kind = .Order_By,
+								start = start_pos,
+								end = i,
+								kind = by_kind,
 								text = full_text,
 							},
 						)
+
 						continue
 					}
 				}
@@ -423,22 +553,21 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 
 				if i < len(s) && is_letter(s[i]) {
 					next_start := i
-					for i < len(s) && is_ident_char(s[i]) {
-						i += 1
-					}
+					for i < len(s) && is_ident_char(s[i]) do i += 1
 					next_text := s[next_start:i]
-					next_upper := strings.to_upper(next_text, context.temp_allocator)
+					next_upper := strings.to_upper(next_text, database_query_allocator)
 
 					kind: Token_Kind
 					found := false
 
-					if next_upper == "IN" {
+					switch next_upper {
+					case "IN":
 						kind = .Not_In
 						found = true
-					} else if next_upper == "LIKE" {
+					case "LIKE":
 						kind = .Not_Like
 						found = true
-					} else if next_upper == "BETWEEN" {
+					case "BETWEEN":
 						kind = .Not_Between
 						found = true
 					}
@@ -451,6 +580,8 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 							Token {
 								line = u16(line),
 								column = u16(kw_or_ident_col),
+								start = start_pos,
+								end = i,
 								kind = kind,
 								text = full_text,
 							},
@@ -468,10 +599,7 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 			// handle qualified identifiers (ex. 'users.name')
 			if i < len(s) && s[i] == '.' {
 				i += 1
-				dot_start := i
-				for i < len(s) && is_ident_char(s[i]) {
-					i += 1
-				}
+				for i < len(s) && is_ident_char(s[i]) do i += 1
 
 				full_text := s[start_pos:i]
 				column += len(full_text)
@@ -480,6 +608,8 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 					Token {
 						line = u16(line),
 						column = u16(kw_or_ident_col),
+						start = start_pos,
+						end = i,
 						kind = .Ident,
 						text = full_text,
 					},
@@ -492,7 +622,14 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 				column += len(text)
 				append(
 					&result,
-					Token{line = u16(line), column = u16(kw_or_ident_col), kind = kw, text = text},
+					Token {
+						line = u16(line),
+						column = u16(kw_or_ident_col),
+						start = start_pos,
+						end = i,
+						kind = kw,
+						text = text,
+					},
 				)
 				continue
 			}
@@ -501,14 +638,30 @@ tokenize :: proc(s: string, allocator := context.allocator) -> (tokens: [dynamic
 			column += len(text)
 			append(
 				&result,
-				Token{line = u16(line), column = u16(kw_or_ident_col), kind = .Ident, text = text},
+				Token {
+					line = u16(line),
+					column = u16(kw_or_ident_col),
+					start = start_pos,
+					end = i,
+					kind = .Ident,
+					text = text,
+				},
 			)
-			continue
+		case:
+			msgf(
+				.Error,
+				.Tokenizer,
+				"Unexpected character at %v:%v-%v:%v %c",
+				line,
+				column,
+				line,
+				column + 1,
+				ch,
+			)
+			return
 		}
-
-		log.errorf("Unexpected character at %v:%v: %v", line, column, ch)
-		return result, false
 	}
 
-	return result, true
+	ok = true
+	return
 }
