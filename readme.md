@@ -2,6 +2,8 @@
 
 An in-process engine. Syntax is SQLite-ish.
 
+WASM: https://dawdmaow.github.io/odinsql/
+
 ### Supported statements
 
 - **Query**: `SELECT … FROM … [JOIN …]* [WHERE …] [GROUP BY …] [HAVING …] [ORDER BY …] [LIMIT …] [OFFSET …]`.
